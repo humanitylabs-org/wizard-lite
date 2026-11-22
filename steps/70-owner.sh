@@ -109,7 +109,7 @@ chmod 750 /etc/lite
 # The three agent tiles on the apps dashboard. Each is a link to a browser terminal that already runs as that
 # agent's Linux user (see payload/terminal.sh). Needs the server's Tailscale name, so only once it has joined.
 tiles() {
-  local u port title hint desc f tok jar=/root/.lite-runtipi.cookies api=http://127.0.0.1/api links id body code up=0
+  local u port title hint desc f tok new ip jar=/root/.lite-runtipi.cookies api=http://127.0.0.1/api links id body code up=0
   joined || { echo "Agent tiles: added once the server is on your Tailscale. $AGAIN"; return 1; }
   if [ "$(curl -s -m 15 -b "$jar" "$api/user-context" | jq -r .isLoggedIn 2>/dev/null)" != true ]; then
     . /etc/lite/runtipi-admin.env
@@ -117,12 +117,19 @@ tiles() {
       -d "$(jq -cn --arg u "$RUNTIPI_ADMIN_USER" --arg p "$RUNTIPI_ADMIN_PASSWORD" '{username:$u,password:$p}')" "$api/auth/login"
   fi
   links=$(curl -s -m 15 -b "$jar" "$api/links")
+  ip=$(ip -4 -o addr show dev tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
   while IFS='|' read -r u port title hint desc; do
     f=/etc/lite/terminal-$u.env
     tok=$(sed -n 's/^TOKEN=//p' "$f" 2>/dev/null)
     [ -n "$tok" ] || tok=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
-    printf 'PORT=%s\nTOKEN=%s\nTITLE="%s"\nHINT="%s"\n' "$port" "$tok" "$title" "$hint" | install -m 600 /dev/stdin "$f"
-    systemctl enable -q "lite-terminal@$u"; systemctl restart "lite-terminal@$u"
+    new=$(printf 'PORT=%s\nTOKEN=%s\nTITLE="%s"\nHINT="%s"' "$port" "$tok" "$title" "$hint")
+    systemctl enable -q "lite-terminal@$u"
+    # A terminal that already runs with these settings on the Tailscale address is left alone: the owner may be
+    # running this installer from inside it (the Fixer tile).
+    if [ "$new" != "$(cat "$f" 2>/dev/null)" ] || ! ss -ltnH "sport = :$port" 2>/dev/null | grep -q "$ip:$port "; then
+      printf '%s\n' "$new" | install -m 600 /dev/stdin "$f"
+      systemctl restart "lite-terminal@$u"
+    fi
     body=$(jq -nc --arg t "$title" --arg l "http://$n:$port/$tok/" --arg d "$desc" '{title:$t,url:$l,description:$d}')
     id=$(printf '%s' "$links" | jq -r --arg t "$title" '.links[]? | select(.title==$t) | .id' | head -1)
     if [ -n "$id" ]; then code=$(curl -s -m 15 -b "$jar" -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' -d "$body" "$api/links/$id")

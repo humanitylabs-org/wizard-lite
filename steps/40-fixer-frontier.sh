@@ -50,11 +50,13 @@ cat > /etc/systemd/system/lite-terminal@.service <<'UNIT'
 [Unit]
 Description=Browser terminal for the Linux user %i (a tile on the apps dashboard; owner's Tailscale devices only)
 After=tailscaled.service lite-firewall.service
-Requires=lite-firewall.service
 
 [Service]
 User=%i
 EnvironmentFile=/etc/lite/terminal-%i.env
+# never starts without the firewall's rules loaded (checked as root); a later firewall reload leaves it running,
+# so the installer can be run again from the Fixer tile
+ExecStartPre=+/usr/sbin/nft list table inet lite_fw
 ExecStart=/bin/bash /opt/lite-src/payload/terminal.sh
 Restart=always
 RestartSec=10
