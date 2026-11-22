@@ -14,6 +14,8 @@ mail, budget, music, contacts), tell the owner to ask Hermes in the `driver` ter
 - Private AI: `tinfoil-proxy.service` on 127.0.0.1:3301 (both you and the private assistant talk to models through it).
 - Firewall: `lite-firewall.service`, rules in `/etc/lite/firewall.nft`, allowed devices in `/etc/lite/owner-devices`
   (the owner changes the list by running the installer again). Private network: Tailscale.
+- Browser terminals behind the three agent tiles on the dashboard: `lite-terminal@driver`, `lite-terminal@fixer`
+  and `lite-terminal@frontier` (stock ttyd, ports 7681 to 7683, on the Tailscale address only).
 - The installer: `/root/wizard-lite/install.sh`. It is safe to run again and skips what is done.
 - Versions installed: `/etc/lite/versions`. Install log: `/var/log/lite-install.log`.
 

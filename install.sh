@@ -50,13 +50,22 @@ echo
 echo "=== Result"
 if [ -n "$failed" ]; then echo "Stopped at $failed. Details above and in $LOG."; exit 1; fi
 [ -z "$incomplete" ] || echo "Not finished (see above):$incomplete. Run this installer again to finish."
-echo "Your apps, open only on the devices you picked:"; sed 's/^/  /' /etc/lite/links.txt 2>/dev/null
-echo "App login: the user name and password are in /etc/lite/owner.env (as fixer: sudo cat /etc/lite/owner.env)"
+echo "Three agents, each as its own Linux user. Open them as tiles on the page below, or in this terminal with su"
+echo "(for example: su - driver, and exit to come back):"
+echo "  Private assistant   user driver     type: hermes"
+echo "  Fixer               user fixer      type: pi                (the only user with admin rights)"
+echo "  Frontier            user frontier   type: claude or codex   (cut off from your apps; each asks you to sign in once)"
+echo "To change your devices or the key, run this again: sudo bash /root/wizard-lite/install.sh"
 echo
-echo "One terminal per Linux user. Open it in Tailscale (admin console, Machines, this server, SSH) with that"
-echo "user name, or switch from this root terminal with su, for example: su - driver   (exit brings you back)"
-echo "  driver     type: hermes            your private assistant (try: show me around)"
-echo "  fixer      type: pi                the troubleshooter, the only user with admin rights"
-echo "  frontier   type: claude or codex   frontier models, cut off from your apps; each asks you to sign in once"
-echo "To change your devices or the key: sudo bash /root/wizard-lite/install.sh"
+page=$(sed -n 's/^Apps dashboard: //p' /etc/lite/links.txt 2>/dev/null)
+echo "YOUR PAGE: your apps and your three agents (the My Apps tab). Open it on a device you picked:"
+echo "  $page"
+# The logins go to the screen only, never into the log file.
+if (exec > /dev/tty) 2>/dev/null; then
+  ( . /etc/lite/runtipi-admin.env; . /etc/lite/owner.env
+    echo "  Log in to the page with:    $RUNTIPI_ADMIN_USER   $RUNTIPI_ADMIN_PASSWORD"
+    echo "  Each app has its own login: $OWNER_USER   $OWNER_PASSWORD" ) > /dev/tty 2>/dev/null
+else
+  echo "  The logins for the page and the apps are in /etc/lite/runtipi-admin.env and /etc/lite/owner.env (root only)."
+fi
 [ -z "$incomplete" ]

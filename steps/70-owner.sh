@@ -2,6 +2,7 @@
 # Step 70: the three things only the owner can do, asked right here in the terminal the installer runs in:
 #   1. sign this server in to their Tailscale     2. say which of their devices may open the apps
 #   3. paste their Tinfoil key (it stays hidden)  then both AIs are checked and the app links are written.
+# It then writes the private assistant's page of instructions and puts the three agent tiles on the dashboard.
 # A thing that is already done is skipped, so running the installer again is how the owner changes the device
 # list or the key. With no terminal attached (a test run over plain SSH) the questions are skipped.
 set -uo pipefail
@@ -94,11 +95,49 @@ fi
 
 # The app links, for the owner and for the private assistant's tour. Only root and the driver user can read them.
 n=$(name); [ -n "$n" ] || n="(not on Tailscale yet)"
-{ echo "Apps dashboard: http://$n"; jq -r --arg n "$n" '.[] | "\(.what): http://\($n):\(.port)  (\(.name))"' /etc/lite/apps.json 2>/dev/null
+{ echo "Apps dashboard: http://$n/apps"; jq -r --arg n "$n" '.[] | "\(.what): http://\($n):\(.port)  (\(.name))"' /etc/lite/apps.json 2>/dev/null
   echo "Connected to the private assistant: $(tr '\n' ' ' < /etc/lite/connected-apps 2>/dev/null)"; } > /etc/lite/links.txt
 chmod 640 /etc/lite/links.txt
 install -D -m 640 -o root -g driver /etc/lite/links.txt /opt/lite/skills/lite-onboarding/references/links.md
 chmod 750 /etc/lite
+
+# The private assistant's own page (Hermes reads SOUL.md by itself): who it is, what it can and cannot do, and
+# the apps with their links.
+{ cat /opt/lite-src/payload/driver/SOUL.md; echo; sed 's/^/- /' /etc/lite/links.txt; } \
+  | install -m 644 -o driver -g driver /dev/stdin /home/driver/.hermes/SOUL.md
+
+# The three agent tiles on the apps dashboard. Each is a link to a browser terminal that already runs as that
+# agent's Linux user (see payload/terminal.sh). Needs the server's Tailscale name, so only once it has joined.
+tiles() {
+  local u port title hint desc f tok jar=/root/.lite-runtipi.cookies api=http://127.0.0.1/api links id body code up=0
+  joined || { echo "Agent tiles: added once the server is on your Tailscale. $AGAIN"; return 1; }
+  if [ "$(curl -s -m 15 -b "$jar" "$api/user-context" | jq -r .isLoggedIn 2>/dev/null)" != true ]; then
+    . /etc/lite/runtipi-admin.env
+    curl -s -m 30 -o /dev/null -c "$jar" -H 'content-type: application/json' \
+      -d "$(jq -cn --arg u "$RUNTIPI_ADMIN_USER" --arg p "$RUNTIPI_ADMIN_PASSWORD" '{username:$u,password:$p}')" "$api/auth/login"
+  fi
+  links=$(curl -s -m 15 -b "$jar" "$api/links")
+  while IFS='|' read -r u port title hint desc; do
+    f=/etc/lite/terminal-$u.env
+    tok=$(sed -n 's/^TOKEN=//p' "$f" 2>/dev/null)
+    [ -n "$tok" ] || tok=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    printf 'PORT=%s\nTOKEN=%s\nTITLE="%s"\nHINT="%s"\n' "$port" "$tok" "$title" "$hint" | install -m 600 /dev/stdin "$f"
+    systemctl enable -q "lite-terminal@$u"; systemctl restart "lite-terminal@$u"
+    body=$(jq -nc --arg t "$title" --arg l "http://$n:$port/$tok/" --arg d "$desc" '{title:$t,url:$l,description:$d}')
+    id=$(printf '%s' "$links" | jq -r --arg t "$title" '.links[]? | select(.title==$t) | .id' | head -1)
+    if [ -n "$id" ]; then code=$(curl -s -m 15 -b "$jar" -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' -d "$body" "$api/links/$id")
+    else code=$(curl -s -m 15 -b "$jar" -o /dev/null -w '%{http_code}' -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' -d "$body" "$api/links"); fi
+    case "$code" in 200|201) up=$((up+1));; *) echo "  The $title tile was refused by the dashboard (answer: $code).";; esac
+  done <<'TILES'
+driver|7681|Private assistant|This is your private assistant's terminal. Type: hermes|Hermes, for everyday things in your apps
+fixer|7682|Fixer|This is the fixer's terminal, the only user with admin rights. Type: pi|Pi, for repairs on this server
+frontier|7683|Frontier|This terminal is for frontier models, cut off from your apps. Type: claude or codex|Claude Code and Codex, cut off from your apps
+TILES
+  sleep 2
+  echo "Agent tiles on the dashboard: $up of 3. Browser terminals running: $(systemctl is-active lite-terminal@driver lite-terminal@fixer lite-terminal@frontier | grep -cx active) of 3."
+  [ "$up" = 3 ]
+}
+if [ -t 0 ] || joined; then tiles || rc=1; fi
 
 [ $rc = 0 ] && echo "STEP 70 OK" || echo "STEP 70 INCOMPLETE"
 exit $rc

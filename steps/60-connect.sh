@@ -59,7 +59,15 @@ echo "$wired" | tr ' ' '\n' | grep -v '^$' > /etc/lite/connected-apps; chmod 640
 #    (step 70 writes the links file the tour reads)
 
 # 4. connectors only: the assistant loses its own terminal, file and code-running tools, so it cannot read the
-#    connector credentials or app files and can only act through the allowed connector tools
-as $U "hermes tools disable terminal file code_execution" >/dev/null
-echo "assistant tools off: $(as $U "hermes tools list" | grep -E "disabled +(terminal|file|code_execution) " | awk '{print $3}' | tr '\n' ' ')"
+#    connector credentials or app files and can only act through the allowed connector tools. Everything else a
+#    private assistant does not need goes too (web, browser, computer use, images, speech, vision, helpers,
+#    scheduled jobs, cloud connections). What stays: the app connectors, memory, to-do, questions, earlier chats,
+#    and skills (for the tour).
+OFF="terminal file code_execution web browser computer_use image_gen tts vision delegation cronjob connections"
+as $U "hermes tools disable $OFF" >/dev/null
+echo "assistant tools on: $(as $U "hermes tools list" | sed -n '/Built-in/,/Plugin/p' | grep ' enabled ' | awk '{print $3}' | tr '\n' ' ')"
+# 5. Hermes's stock skills (coding, GitHub and so on) are not for a private assistant; Hermes's own switch removes
+#    them and stops updates from putting them back. The tour skill lives outside that folder and stays.
+as $U "hermes skills opt-out --remove --yes" >/dev/null 2>&1 || echo "stock skills could not be removed"
+echo "assistant skills left: $(as $U "hermes skills list" | grep -c 'enabled *│' || true)"
 echo "STEP 60 OK"

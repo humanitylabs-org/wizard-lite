@@ -12,8 +12,8 @@ installer that builds it. It is the only thing of ours the owner runs: there are
 
 3. At the end it asks three things in the same terminal: open a Tailscale sign-in link, pick which of your
    devices may open the apps, paste a Tinfoil key.
-4. One terminal per Linux user. Open it in Tailscale (admin console, Machines, the server, SSH) with the user
-   name, or switch from the root terminal with `su - driver` (`exit` brings you back).
+4. Open the page it shows last. It has your apps and three tiles, one per agent. Each tile opens a terminal in
+   the browser that already runs as that agent's Linux user (or use `su - driver` in the root terminal).
    - `driver`: type `hermes`, your private assistant.
    - `fixer`: type `pi`, the troubleshooter and the only user with admin rights.
    - `frontier`: type `claude` or `codex`, frontier models, cut off from your apps.
@@ -25,8 +25,8 @@ To change your devices or the key, run the installer again: `sudo bash /root/wiz
 - `install.sh`: runs the steps in `steps/` in order, logs to /var/log/lite-install.log, safe to run again.
 - `steps/NN-*.sh`: one step each, in plain bash, idempotent. Pinned versions are at the top of each. The last
   one, `70-owner.sh`, asks the three questions.
-- `payload/`: files the installer lays down: the firewall rules, the private assistant's tour skill and Pi's
-  one page of instructions. No commands.
+- `payload/`: files the installer lays down: the firewall rules, one page of instructions per agent, the
+  private assistant's tour skill and the browser-terminal starter. No commands.
 - `tests/TEN.md` and `tests/ten.sh`: the ten-request pass/fail test. `tests/mcp_probe.py`: checks a connector
   without any AI.
 - `run.sh`: for working on a test server from another machine (copies this folder over and runs the installer

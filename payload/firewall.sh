@@ -8,6 +8,8 @@
 #      Tailscale SSH is answered inside Tailscale itself and is not affected by the list.
 #   3. Linux users: the frontier user cannot connect to anything on this server, its apps, or any private or Tailscale
 #      address. It keeps the internet and name lookups.
+#   Also: the three browser terminals (ports 7681-7683) answer only over Tailscale, so no app or program on this
+#   server can open one (the fixer's terminal has admin rights).
 #   bash firewall.sh          apply the rules from the device list
 #   bash firewall.sh --arm    same, with a 3-minute rollback in case a hand change locks you out
 set -euo pipefail
@@ -28,6 +30,7 @@ table inet lite_fw {
   set owner6 { type ipv6_addr; ${OWN6:+elements = { $OWN6 \}} }
   chain input {
     type filter hook input priority 0; policy drop;
+    iifname != "tailscale0" tcp dport 7681-7683 drop comment "browser terminals: only over Tailscale, never from this server or its apps"
     iifname "lo" accept
     ct state established,related accept
     ct state invalid drop
