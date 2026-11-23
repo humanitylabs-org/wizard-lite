@@ -25,8 +25,8 @@ To change your devices or the key, run the installer again: `sudo bash /root/wiz
 - `install.sh`: runs the steps in `steps/` in order, logs to /var/log/lite-install.log, safe to run again.
 - `steps/NN-*.sh`: one step each, in plain bash, idempotent. Pinned versions are at the top of each. The last
   one, `70-owner.sh`, asks the three questions.
-- `payload/`: files the installer lays down: the firewall rules, one page of instructions per agent, the
-  private assistant's tour skill and the browser-terminal starter. No commands.
+- `payload/`: files the installer lays down: the firewall rules, the https settings for stock Caddy, one page of
+  instructions per agent, the private assistant's tour skill and the browser-terminal starter. No commands.
 - `tests/TEN.md` and `tests/ten.sh`: the ten-request pass/fail test. `tests/mcp_probe.py`: checks a connector
   without any AI.
 - `run.sh`: for working on a test server from another machine (copies this folder over and runs the installer

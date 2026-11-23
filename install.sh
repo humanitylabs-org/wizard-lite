@@ -58,14 +58,14 @@ echo "  Frontier            user frontier   type: claude or codex   (cut off fro
 echo "To change your devices or the key, run this again: sudo bash /root/wizard-lite/install.sh"
 echo
 page=$(sed -n 's/^Apps dashboard: //p' /etc/lite/links.txt 2>/dev/null)
-echo "YOUR PAGE: your apps and your three agents (the My Apps tab). Open it on a device you picked:"
+echo "YOUR PAGE: your apps and your three agents. Open it on a device you picked; it needs no login:"
 echo "  $page"
 # The logins go to the screen only, never into the log file.
 if (exec > /dev/tty) 2>/dev/null; then
   ( . /etc/lite/runtipi-admin.env; . /etc/lite/owner.env
-    echo "  Log in to the page with:    $RUNTIPI_ADMIN_USER   $RUNTIPI_ADMIN_PASSWORD"
-    echo "  Each app has its own login: $OWNER_USER   $OWNER_PASSWORD" ) > /dev/tty 2>/dev/null
+    echo "  To install or manage apps, log in on the page (top right) with:  $RUNTIPI_ADMIN_USER   $RUNTIPI_ADMIN_PASSWORD"
+    echo "  The apps' own login (and for phone sync: calendar, contacts, mail, music):  $OWNER_USER   $OWNER_PASSWORD" ) > /dev/tty 2>/dev/null
 else
-  echo "  The logins for the page and the apps are in /etc/lite/runtipi-admin.env and /etc/lite/owner.env (root only)."
+  echo "  The admin login for the page and the apps' own login are in /etc/lite/runtipi-admin.env and /etc/lite/owner.env (root only)."
 fi
 [ -z "$incomplete" ]

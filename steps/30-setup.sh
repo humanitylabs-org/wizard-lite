@@ -8,14 +8,17 @@ trap 'echo "FAILED at line $LINENO" >&2' ERR
 SRC=/opt/lite-src/payload
 L=/opt/lite
 U=driver
-MODEL=${MODEL:-kimi-k3-1-pro}
+# One model per agent: the private assistant chats every day, so it gets the affordable GLM; the fixer is used
+# sparingly and gets the strongest model, Kimi.
+DRIVER_MODEL=${DRIVER_MODEL:-glm-5-3}
+FIXER_MODEL=${FIXER_MODEL:-kimi-k3-1-pro}
 as() { local u=$1; shift; sudo -iu "$u" bash -lc "$*"; }
 
 echo "== tour skill, Pi instructions"
 install -d -m 755 -o root -g root $L $L/skills; install -d -m 750 /etc/lite
 rsync -a --delete --exclude='references/' --chown=root:root --chmod=D755,F644 "$SRC/skills/" $L/skills/
 for c in lite-setup lite-health assistant fixer frontier builder; do rm -f /usr/local/bin/$c; done   # commands of earlier installs
-echo "$MODEL" > /etc/lite/default-model
+echo "$DRIVER_MODEL" > /etc/lite/default-model   # the private assistant's model (step 70 and tests/ten.sh read it)
 install -d -m 700 -o fixer -g fixer /home/fixer/.pi /home/fixer/.pi/agent
 install -m 644 -o fixer -g fixer "$SRC/fixer/AGENTS.md" /home/fixer/.pi/agent/AGENTS.md
 
@@ -40,7 +43,7 @@ jq -n --arg k '!cat /home/fixer/.pi/agent/tinfoil.key' '{providers:{tinfoil:{bas
   | install -m 600 -o fixer -g fixer /dev/stdin /home/fixer/.pi/agent/models.json
 # plain "pi" then starts on the private model (Pi's own default is Google); other settings the owner made are kept
 S=/home/fixer/.pi/agent/settings.json
-{ cat "$S" 2>/dev/null || echo '{}'; } | jq --arg m "$MODEL" '. + {defaultProvider:"tinfoil", defaultModel:$m}' > "$S.new"
+{ cat "$S" 2>/dev/null || echo '{}'; } | jq --arg m "$FIXER_MODEL" '. + {defaultProvider:"tinfoil", defaultModel:$m}' > "$S.new"
 install -m 600 -o fixer -g fixer "$S.new" "$S"; rm -f "$S.new"
 
 echo "== driver: Hermes points at the Tinfoil proxy (step 70 stores the key)"
@@ -50,14 +53,14 @@ cfg providers.tinfoil.base_url http://127.0.0.1:3301/v1
 cfg providers.tinfoil.key_env HERMES_CUSTOM_TINFOIL_API_KEY
 cfg providers.tinfoil.api_mode chat_completions
 cfg providers.tinfoil.discover_models false
-cfg providers.tinfoil.model "$MODEL"
+cfg providers.tinfoil.model "$DRIVER_MODEL"
 cfg model.provider tinfoil
-cfg model.default "$MODEL"
+cfg model.default "$DRIVER_MODEL"
 cfg skills.external_dirs "[$L/skills]"
 
 echo "== result"
 echo "commands of ours in /usr/local/bin: $(ls /usr/local/bin | grep -cE '^(lite-|assistant$|fixer$|frontier$)' || true) (0 = none, as intended)"
-echo "driver: $(as driver 'command -v hermes')   fixer: $(as fixer 'command -v pi'), default $(jq -r '.defaultProvider + "/" + .defaultModel' $S)"
+echo "driver: $(as driver 'command -v hermes'), model $DRIVER_MODEL   fixer: $(as fixer 'command -v pi'), default $(jq -r '.defaultProvider + "/" + .defaultModel' $S)"
 echo "driver sudo: $(sudo -u $U sudo -n true 2>&1 | grep -c 'password is required' || true) (1 = none, as intended)"
 echo "frontier tools: $(as frontier 'command -v claude codex' | tr '\n' ' ')"
 echo "STEP 30 OK"

@@ -8,7 +8,9 @@ trap 'echo "FAILED at line $LINENO" >&2' ERR
 JAR=/root/.lite-runtipi.cookies
 API=http://127.0.0.1/api
 APPS=${APPS:-"baikal actual-budget navidrome filebrowser-quantum stalwart-mail"}
-BODY='{"exposed":false,"exposedLocal":false,"openPort":true,"isVisibleOnGuestDashboard":false,"enableAuth":false}'
+# isVisibleOnGuestDashboard: the app shows on Runtipi's stock guest dashboard (switched on below), so the
+# owner's picked devices see the apps page without signing in to Runtipi.
+BODY='{"exposed":false,"exposedLocal":false,"openPort":true,"isVisibleOnGuestDashboard":true,"enableAuth":false}'
 
 status_of() { curl -s -m 20 -b "$JAR" "$API/apps/installed" | jq -r --arg u "$1" '.installed[]? | select(.info.urn==$u) | .app.status' | sed -n 1p; }
 
@@ -71,6 +73,30 @@ for id in $APPS; do
 done
 
 [ -z "${failed:-}" ] || { echo "not running:$failed"; exit 1; }
+
+# The apps page without a Runtipi login. Runtipi's own "guest dashboard" setting (Settings > General) shows
+# every app marked visible, and the links marked visible (the three agent tiles, step 70), to anyone who opens
+# the page. Only the owner's picked devices can open it (the firewall), so Tailscale is the only gate.
+# Installing apps and changing settings still needs the Runtipi admin login.
+if [ "$(curl -s -m 15 "$API/user-context" | jq -r .isGuestDashboardEnabled)" != true ]; then
+  code=$(curl -s -m 30 -o /tmp/rt-settings.json -w '%{http_code}' -b "$JAR" -X PATCH -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' \
+    -d '{"guestDashboard":true}' "$API/user-settings")
+  case "$code" in 200|201|204) ;; *) echo "guest dashboard refused ($code): $(cut -c1-300 /tmp/rt-settings.json)"; exit 1;; esac
+fi
+# Apps installed before this setting existed: mark each visible with Runtipi's own app settings, then restart
+# it once so Runtipi does not keep a "restart needed" note (the app's own settings do not change).
+for urn in $(curl -s -m 20 -b "$JAR" "$API/apps/installed" | jq -r '.installed[]? | select(.app.isVisibleOnGuestDashboard != true) | .info.urn'); do
+  form=$(curl -s -m 20 -b "$JAR" "$API/apps/installed" | jq -c --arg u "$urn" '.installed[] | select(.info.urn==$u) | (.app.config // {}) + {isVisibleOnGuestDashboard:true}')
+  code=$(curl -s -m 60 -o /tmp/rt-config.json -w '%{http_code}' -b "$JAR" -X PATCH -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' \
+    -d "$form" "$API/app-lifecycle/$urn/update-config")
+  case "$code" in 200|201) ;; *) echo "${urn%%:*}: could not show it on the page ($code): $(cut -c1-300 /tmp/rt-config.json)"; exit 1;; esac
+  if [ "$(curl -s -m 20 -b "$JAR" "$API/apps/installed" | jq -r --arg u "$urn" '.installed[] | select(.info.urn==$u) | .app.pendingRestart')" = true ]; then
+    curl -s -m 60 -o /dev/null -b "$JAR" -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' -X POST "$API/app-lifecycle/$urn/restart"
+    for i in $(seq 1 60); do [ "$(status_of "$urn")" = running ] && break; sleep 5; done
+  fi
+  echo "${urn%%:*}: shown on the page without a login"
+done
+echo "apps page without a login: $(curl -s -m 15 "$API/apps/guest" | jq '.installed | length') apps (guest dashboard $(curl -s -m 15 "$API/user-context" | jq -r 'if .isGuestDashboardEnabled then "on" else "OFF" end'))"
 
 echo "== result"
 curl -s -m 20 -b "$JAR" "$API/apps/installed" > /root/.lite-apps.json

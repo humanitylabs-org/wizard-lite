@@ -7,7 +7,7 @@
 # list or the key. With no terminal attached (a test run over plain SSH) the questions are skipped.
 set -uo pipefail
 PROXY=http://127.0.0.1:3301/v1
-MODEL=$(cat /etc/lite/default-model 2>/dev/null || echo kimi-k3-1-pro)
+MODEL=$(cat /etc/lite/default-model 2>/dev/null || echo glm-5-3)
 DENV=/home/driver/.hermes/.env
 DEVICES=/etc/lite/owner-devices
 AGAIN="Run the installer again to finish this."
@@ -93,9 +93,13 @@ else
   echo "Run the installer in the server's own terminal to answer them."
 fi
 
+# https for the page, the apps and the tiles needs the server's Tailscale name, so it is (re)done here once the
+# server has joined (step 65 installed Caddy; payload/https.sh skips everything until then).
+if joined; then bash /opt/lite-src/payload/https.sh || rc=1; fi
+
 # The app links, for the owner and for the private assistant's tour. Only root and the driver user can read them.
 n=$(name); [ -n "$n" ] || n="(not on Tailscale yet)"
-{ echo "Apps dashboard: http://$n/apps"; jq -r --arg n "$n" '.[] | "\(.what): http://\($n):\(.port)  (\(.name))"' /etc/lite/apps.json 2>/dev/null
+{ echo "Apps dashboard: https://$n/apps"; jq -r --arg n "$n" '.[] | "\(.what): https://\($n):\(.port)  (\(.name))"' /etc/lite/apps.json 2>/dev/null
   echo "Connected to the private assistant: $(tr '\n' ' ' < /etc/lite/connected-apps 2>/dev/null)"; } > /etc/lite/links.txt
 chmod 640 /etc/lite/links.txt
 install -D -m 640 -o root -g driver /etc/lite/links.txt /opt/lite/skills/lite-onboarding/references/links.md
@@ -109,7 +113,7 @@ chmod 750 /etc/lite
 # The three agent tiles on the apps dashboard. Each is a link to a browser terminal that already runs as that
 # agent's Linux user (see payload/terminal.sh). Needs the server's Tailscale name, so only once it has joined.
 tiles() {
-  local u port title hint desc f tok new ip jar=/root/.lite-runtipi.cookies api=http://127.0.0.1/api links id body code up=0
+  local u port title hint desc f tok new jar=/root/.lite-runtipi.cookies api=http://127.0.0.1/api links id body code up=0
   joined || { echo "Agent tiles: added once the server is on your Tailscale. $AGAIN"; return 1; }
   if [ "$(curl -s -m 15 -b "$jar" "$api/user-context" | jq -r .isLoggedIn 2>/dev/null)" != true ]; then
     . /etc/lite/runtipi-admin.env
@@ -117,20 +121,21 @@ tiles() {
       -d "$(jq -cn --arg u "$RUNTIPI_ADMIN_USER" --arg p "$RUNTIPI_ADMIN_PASSWORD" '{username:$u,password:$p}')" "$api/auth/login"
   fi
   links=$(curl -s -m 15 -b "$jar" "$api/links")
-  ip=$(ip -4 -o addr show dev tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
   while IFS='|' read -r u port title hint desc; do
     f=/etc/lite/terminal-$u.env
     tok=$(sed -n 's/^TOKEN=//p' "$f" 2>/dev/null)
     [ -n "$tok" ] || tok=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
     new=$(printf 'PORT=%s\nTOKEN=%s\nTITLE="%s"\nHINT="%s"' "$port" "$tok" "$title" "$hint")
     systemctl enable -q "lite-terminal@$u"
-    # A terminal that already runs with these settings on the Tailscale address is left alone: the owner may be
-    # running this installer from inside it (the Fixer tile).
-    if [ "$new" != "$(cat "$f" 2>/dev/null)" ] || ! ss -ltnH "sport = :$port" 2>/dev/null | grep -q "$ip:$port "; then
+    # A terminal that already runs with these settings on its socket is left alone: the owner may be running
+    # this installer from inside it (the Fixer tile).
+    if [ "$new" != "$(cat "$f" 2>/dev/null)" ] || ! systemctl is-active -q "lite-terminal@$u" \
+       || ! ss -lxH 2>/dev/null | grep -q "/run/lite-terminal/$u/ttyd.sock "; then
       printf '%s\n' "$new" | install -m 600 /dev/stdin "$f"
       systemctl restart "lite-terminal@$u"
     fi
-    body=$(jq -nc --arg t "$title" --arg l "http://$n:$port/$tok/" --arg d "$desc" '{title:$t,url:$l,description:$d}')
+    # visible on Runtipi's guest dashboard (step 15), so the tile shows without a Runtipi login
+    body=$(jq -nc --arg t "$title" --arg l "https://$n:$port/$tok/" --arg d "$desc" '{title:$t,url:$l,description:$d,isVisibleOnGuestDashboard:true}')
     id=$(printf '%s' "$links" | jq -r --arg t "$title" '.links[]? | select(.title==$t) | .id' | head -1)
     if [ -n "$id" ]; then code=$(curl -s -m 15 -b "$jar" -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' -d "$body" "$api/links/$id")
     else code=$(curl -s -m 15 -b "$jar" -o /dev/null -w '%{http_code}' -H 'content-type: application/json' -H 'Origin: http://127.0.0.1' -d "$body" "$api/links"); fi

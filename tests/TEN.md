@@ -22,4 +22,4 @@ for the rest, marked REVIEW, for a person to judge with the rule given here.
 Requests 1, 2, 6 and 7 are judged by a person from the printed answer; the rest are checked against the app.
 Requests 5 and 9 need the photos app, which is not in the first install; the script skips them without it.
 Record the result as "n/10 passed, model X, date" in FINDINGS.md. Run it once per candidate model
-(`MODEL=glm-5-3 ten.sh` overrides the model for the run).
+(`MODEL=kimi-k3-1-pro ten.sh` overrides the model for the run).

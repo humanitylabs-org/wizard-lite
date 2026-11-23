@@ -57,6 +57,8 @@ EnvironmentFile=/etc/lite/terminal-%i.env
 # never starts without the firewall's rules loaded (checked as root); a later firewall reload leaves it running,
 # so the installer can be run again from the Fixer tile
 ExecStartPre=+/usr/sbin/nft list table inet lite_fw
+# its socket's folder: this user and the caddy group only (Caddy is installed in step 65)
+ExecStartPre=+/usr/bin/install -d -m 2750 -o %i -g caddy /run/lite-terminal/%i
 ExecStart=/bin/bash /opt/lite-src/payload/terminal.sh
 Restart=always
 RestartSec=10

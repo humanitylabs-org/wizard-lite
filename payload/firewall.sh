@@ -8,8 +8,11 @@
 #      Tailscale SSH is answered inside Tailscale itself and is not affected by the list.
 #   3. Linux users: the frontier user cannot connect to anything on this server, its apps, or any private or Tailscale
 #      address. It keeps the internet and name lookups.
-#   Also: the three browser terminals (ports 7681-7683) answer only over Tailscale, so no app or program on this
-#   server can open one (the fixer's terminal has admin rights).
+#   Also: the three browser terminals (ports 7681-7683, Caddy's 17681-17683) answer only over Tailscale, so no app
+#   or program on this server can open one (the fixer's terminal has admin rights).
+#   https: when /etc/lite/https-ports exists (written by payload/https.sh), each listed port arriving over Tailscale
+#   is handed to Caddy's own port on this server. This happens before Docker's own forwarding, and the device
+#   list below still applies, because the request keeps the address of the device that sent it.
 #   bash firewall.sh          apply the rules from the device list
 #   bash firewall.sh --arm    same, with a 3-minute rollback in case a hand change locks you out
 set -euo pipefail
@@ -21,6 +24,9 @@ FUID=$(id -u frontier)
 ips=$(sed 's/#.*//' /etc/lite/owner-devices | tr ' ' '\n' | grep -v '^$' || true)
 OWN4=$(echo "$ips" | grep -v : | paste -sd, - || true)
 OWN6=$(echo "$ips" | grep : | paste -sd, - || true)
+HTTPS=$(awk 'NF==2 {printf "%s%s : %s", (n++ ? ", " : ""), $1, $2}' /etc/lite/https-ports 2>/dev/null || true)
+TO_CADDY=""
+[ -z "$HTTPS" ] || TO_CADDY="iifname \"tailscale0\" redirect to : tcp dport map { $HTTPS } comment \"https: to Caddy\""
 
 cat > /etc/lite/firewall.nft <<EOF
 table inet lite_fw
@@ -30,7 +36,7 @@ table inet lite_fw {
   set owner6 { type ipv6_addr; ${OWN6:+elements = { $OWN6 \}} }
   chain input {
     type filter hook input priority 0; policy drop;
-    iifname != "tailscale0" tcp dport 7681-7683 drop comment "browser terminals: only over Tailscale, never from this server or its apps"
+    iifname != "tailscale0" tcp dport { 7681-7683, 17681-17683 } drop comment "browser terminals: only over Tailscale, never from this server or its apps"
     iifname "lo" accept
     ct state established,related accept
     ct state invalid drop
@@ -41,6 +47,10 @@ table inet lite_fw {
     meta l4proto { icmp, ipv6-icmp } accept
     iifname "$PUB" tcp dport 22 accept comment "ssh: remove once Tailscale SSH is proven"
     iifname "$PUB" udp dport 41641 accept comment "tailscale direct connections"
+  }
+  chain https {
+    type nat hook prerouting priority dstnat - 10; policy accept;
+    $TO_CADDY
   }
   chain forward {
     type filter hook forward priority -10; policy accept;
