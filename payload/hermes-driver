@@ -1,0 +1,18 @@
+#!/bin/sh
+# hermes-driver: run Hermes on the private assistant's settings (/home/driver/.hermes) as the fixer.
+# The assistant (Linux user driver) cannot change its own settings or install (step 78); the fixer can, with this.
+# Examples:  hermes-driver config set model.default glm-5-3     hermes-driver tools list     hermes-driver update
+# Before step 78 has locked the settings (a fresh install), it simply runs Hermes as driver.
+H=/home/driver/.hermes; B=$H/hermes-agent/.hermes/bin/hermes
+if [ -f $H/.managed ]; then
+  # HERMES_MANAGED=false lifts Hermes's own write lock for this one command; HERMES_SKIP_CHMOD keeps the files
+  # readable for driver (Hermes would otherwise make them owner-only, and the owner is now the fixer).
+  if [ "$(id -un)" = fixer ]; then env HERMES_HOME=$H HERMES_MANAGED=false HERMES_SKIP_CHMOD=1 $B "$@"; rc=$?
+  elif [ "$(id -u)" = 0 ]; then runuser -u fixer -- env HOME=/home/fixer HERMES_HOME=$H HERMES_MANAGED=false HERMES_SKIP_CHMOD=1 $B "$@"; rc=$?
+  else echo "hermes-driver: run it as the fixer (or root)" >&2; exit 1; fi
+  # an update or a package install adds files: give them the same owners again (the fixer has sudo)
+  case "${1:-}" in update|pm) sudo -n bash /root/wizard-lite/steps/78-assistant-settings-owner.sh >/dev/null || echo "hermes-driver: rerun step 78" >&2;; esac
+  exit $rc
+fi
+[ "$(id -u)" = 0 ] || { echo "hermes-driver: run it as root before the settings are locked" >&2; exit 1; }
+exec runuser -u driver -- env HOME=/home/driver $B "$@"

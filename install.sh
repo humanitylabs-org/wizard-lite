@@ -35,8 +35,8 @@ install -d -m 750 /etc/lite
 
 # Steps 55 and 57 set up the owner's account in each app; one app refusing must not stop the rest, and
 # step 60 only connects the apps whose account exists. Step 70 is the owner's three questions, which can be
-# answered on a later run. Every other step must succeed.
-SOFT=" 55 57 70 "
+# answered on a later run. Steps 75 to 77 (Matrix chat, tests) must not stop the install either. Every other step must succeed.
+SOFT=" 55 57 70 75 76 77 "
 failed=""; incomplete=""
 for s in steps/[0-9][0-9]-*.sh; do
   n=$(basename "$s" | cut -c1-2); name=$(basename "$s" .sh)
@@ -67,5 +67,27 @@ if (exec > /dev/tty) 2>/dev/null; then
     echo "  The apps' own login (and for phone sync: calendar, contacts, mail, music):  $OWNER_USER   $OWNER_PASSWORD" ) > /dev/tty 2>/dev/null
 else
   echo "  The admin login for the page and the apps' own login are in /etc/lite/runtipi-admin.env and /etc/lite/owner.env (root only)."
+fi
+# Chat with the assistant and the fixer in Element X (steps 75 to 77). The password goes to the screen only.
+if [ -s /etc/lite/matrix-owner.txt ]; then
+  hs=$(sed -n 's/^Homeserver: *//p' /etc/lite/matrix-owner.txt); mu=$(sed -n 's/^Username: *//p' /etc/lite/matrix-owner.txt)
+  echo
+  echo "CHAT WITH YOUR AGENTS in the Element X app, on a device you picked (Tailscale on):"
+  echo "  1. Install Element X: Android https://play.google.com/store/apps/details?id=io.element.android.x"
+  echo "     (iPhone: Element X in the App Store)."
+  echo "  2. Open it, tap Sign in, then Change account provider (or Other), and type:  $hs"
+  echo "  3. Username: $mu   Password: shown below (later: in the Fixer tile, sudo cat /etc/lite/matrix-owner.txt)."
+  echo "  4. Two chats are already there: Assistant (your everyday helper) and Fixer (repairs). They are not"
+  echo "     end-to-end encrypted: Tailscale and your own server keep them private, so you need no recovery key."
+  echo "     If Element X offers to set up recovery, close it. If it asks you to confirm your identity (only after an"
+  echo "     earlier sign-in), tap Can't confirm?, then Reset identity, and type your password: once, nothing to keep."
+  echo "  5. Approvals: when you ask the assistant to give a job to the builder (Frontier), Approvals posts the"
+  echo "     exact job in the Assistant chat. React to that message with a thumbs up to run it once. Anything else"
+  echo "     (another reaction, typing, or no answer in 10 minutes) means no. It asks again for every job."
+  if (exec > /dev/tty) 2>/dev/null; then
+    echo "     Your Element X password:  $(sed -n 's/^Password: *//p' /etc/lite/matrix-owner.txt)" > /dev/tty 2>/dev/null
+  else
+    echo "     Your Element X password is in /etc/lite/matrix-owner.txt (root only)."
+  fi
 fi
 [ -z "$incomplete" ]

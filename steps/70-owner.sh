@@ -65,7 +65,7 @@ step_key() {
     case "$code" in
       200) tmp=$(mktemp); grep -v '^HERMES_CUSTOM_TINFOIL_API_KEY=' "$DENV" > "$tmp" 2>/dev/null || true
            printf 'HERMES_CUSTOM_TINFOIL_API_KEY=%s\n' "$key" >> "$tmp"
-           install -m 600 -o driver -g driver "$tmp" "$DENV"; rm -f "$tmp"          # Hermes, user driver
+           install $( [ -f /home/driver/.hermes/.managed ] && echo "-o fixer -g driver -m 640" || echo "-o driver -g driver -m 600") "$tmp" "$DENV"; rm -f "$tmp"   # Hermes, user driver (owner: step 78)
            printf '%s\n' "$key" | install -m 600 -o fixer -g fixer /dev/stdin /home/fixer/.pi/agent/tinfoil.key   # Pi, user fixer
            echo "  Key works. Saved for Hermes and Pi."; return 0;;
       401|403) echo "  Tinfoil refused that key. Check you copied all of it.";;
@@ -108,7 +108,7 @@ chmod 750 /etc/lite
 # The private assistant's own page (Hermes reads SOUL.md by itself): who it is, what it can and cannot do, and
 # the apps with their links.
 { cat /opt/lite-src/payload/driver/SOUL.md; echo; sed 's/^/- /' /etc/lite/links.txt; } \
-  | install -m 644 -o driver -g driver /dev/stdin /home/driver/.hermes/SOUL.md
+  | install $( [ -f /home/driver/.hermes/.managed ] && echo "-o fixer -g driver -m 640" || echo "-o driver -g driver -m 644") /dev/stdin /home/driver/.hermes/SOUL.md
 
 # The three agent tiles on the apps dashboard. Each is a link to a browser terminal that already runs as that
 # agent's Linux user (see payload/terminal.sh). Needs the server's Tailscale name, so only once it has joined.

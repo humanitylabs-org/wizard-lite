@@ -1,0 +1,52 @@
+#!/usr/bin/python3 -I
+"""One MCP tool for the private assistant (runs as driver, stdio): pass a job to Frontier. It only forwards the
+brief to the root-owned gate (sudo -n /opt/lite/bin/lite-handoff), which asks the owner every time. Custom, as
+small as possible; the approval itself is not in here, so changing this file changes nothing about it."""
+import json, subprocess, sys, threading
+
+TOOL = {
+    "name": "give_to_frontier",
+    "description": (
+        "Give a job to Frontier, the builder (Claude Code on a frontier model, walled off from the owner's apps "
+        "and files). Use it when the owner asks to give something to the builder or to Frontier. Pass the owner's "
+        "request as the brief, in their own words. The owner sees this exact brief in this chat, posted by "
+        "Approvals, and approves it there with a reaction; every job asks again. If they refuse or do not answer, nothing runs. Returns "
+        "Frontier's answer and the folder with its files. Waits up to about 40 minutes."),
+    "inputSchema": {"type": "object", "properties": {"brief": {"type": "string", "description": "the job, in the owner's words"}},
+                    "required": ["brief"]},
+}
+lock = threading.Lock()
+
+
+def send(msg):
+    with lock:
+        sys.stdout.write(json.dumps(msg) + "\n"); sys.stdout.flush()
+
+
+def call(mid, args):
+    brief = str((args or {}).get("brief", ""))
+    try:
+        p = subprocess.run(["sudo", "-n", "/opt/lite/bin/lite-handoff"], input=brief, capture_output=True, text=True,
+                           timeout=2700)
+        text, err = (p.stdout.strip() or p.stderr.strip() or f"exit {p.returncode}"), p.returncode != 0
+    except subprocess.TimeoutExpired:
+        text, err = "The handoff took too long and was stopped.", True
+    send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": text}], "isError": err}})
+
+
+for line in sys.stdin:
+    try: m = json.loads(line)
+    except ValueError: continue
+    mid, meth = m.get("id"), m.get("method")
+    if mid is None: continue  # notifications
+    if meth == "initialize":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": m.get("params", {}).get("protocolVersion", "2025-06-18"),
+              "capabilities": {"tools": {}}, "serverInfo": {"name": "lite-frontier-handoff", "version": "1"}}})
+    elif meth == "tools/list":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"tools": [TOOL]}})
+    elif meth == "tools/call" and m.get("params", {}).get("name") == TOOL["name"]:
+        threading.Thread(target=call, args=(mid, m["params"].get("arguments")), daemon=True).start()
+    elif meth == "ping":
+        send({"jsonrpc": "2.0", "id": mid, "result": {}})
+    else:
+        send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "unknown method"}})

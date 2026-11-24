@@ -30,7 +30,7 @@ if [ "$(curl -s -m 15 -b "$JAR" http://127.0.0.1/api/user-context | jq -r .isLog
     -d "$(jq -cn --arg u "$RUNTIPI_ADMIN_USER" --arg p "$RUNTIPI_ADMIN_PASSWORD" '{username:$u,password:$p}')" http://127.0.0.1/api/auth/login
 fi
 curl -s -m 20 -b "$JAR" http://127.0.0.1/api/apps/installed | jq -c '
-  {"immich":"photos","stalwart-mail":"mail","baikal":"calendar and contacts","filebrowser-quantum":"files","actual-budget":"budget","navidrome":"music"} as $w
+  {"immich":"photos","stalwart-mail":"mail","baikal":"calendar and contacts","filebrowser-quantum":"files","actual-budget":"budget","navidrome":"music","matrix-conduit":"chat (Matrix)"} as $w
   | [.installed[]? | {id:.info.id, name:.info.name, port:.info.port, what:($w[.info.id] // (.info.categories|join(", ")))}]' > /etc/lite/apps.json.new
 [ "$(jq length /etc/lite/apps.json.new)" -gt 0 ] && mv /etc/lite/apps.json.new /etc/lite/apps.json
 chmod 640 /etc/lite/apps.json
@@ -47,7 +47,7 @@ S=/home/fixer/.pi/agent/settings.json
 install -m 600 -o fixer -g fixer "$S.new" "$S"; rm -f "$S.new"
 
 echo "== driver: Hermes points at the Tinfoil proxy (step 70 stores the key)"
-cfg() { as $U "hermes config set $1 '$2'" >/dev/null || { echo "config set $1 refused"; return 1; }; }
+cfg() { /opt/lite/bin/hermes-driver config set "$1" "$2" >/dev/null || { echo "config set $1 refused"; return 1; }; }
 cfg providers.tinfoil.name Tinfoil
 cfg providers.tinfoil.base_url http://127.0.0.1:3301/v1
 cfg providers.tinfoil.key_env HERMES_CUSTOM_TINFOIL_API_KEY

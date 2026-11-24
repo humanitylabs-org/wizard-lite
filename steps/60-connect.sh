@@ -10,13 +10,13 @@ trap 'echo "FAILED at line $LINENO" >&2' ERR
 U=driver; HH=/home/$U/.hermes; CONN=/etc/lite/connectors.env
 N=/opt/lite/node/bin/node; M=/opt/lite/connectors/node_modules
 as() { local u=$1; shift; sudo -iu "$u" bash -lc "$*"; }
-cfg() { as $U "hermes config set $1 '$2'" >/dev/null || { echo "config set $1 refused"; return 1; }; }
+cfg() { /opt/lite/bin/hermes-driver config set "$1" "$2" >/dev/null || { echo "config set $1 refused"; return 1; }; }
 has() { grep -qE "^$1=.+" $CONN 2>/dev/null; }
 
 # 1. secrets: replace the connector block in the driver's .env
 T=$(mktemp); sed '/^# lite connectors (start)/,/^# lite connectors (end)/d' $HH/.env > $T
 { echo "# lite connectors (start)"; grep -E '^[A-Z_]+=' $CONN; echo "# lite connectors (end)"; } >> $T
-install -o $U -g $U -m 600 $T $HH/.env; rm -f $T
+install $( [ -f /home/driver/.hermes/.managed ] && echo "-o fixer -g driver -m 640" || echo "-o driver -g driver -m 600") $T $HH/.env; rm -f $T   # owner: step 78
 install -d -o $U -g $U -m 700 /home/$U/.local/share/lite /home/$U/.local/share/lite/actual /home/$U/.config/navidrome-mcp
 
 # 2. one MCP server per app
@@ -64,10 +64,10 @@ echo "$wired" | tr ' ' '\n' | grep -v '^$' > /etc/lite/connected-apps; chmod 640
 #    scheduled jobs, cloud connections). What stays: the app connectors, memory, to-do, questions, earlier chats,
 #    and skills (for the tour).
 OFF="terminal file code_execution web browser computer_use image_gen tts vision delegation cronjob connections"
-as $U "hermes tools disable $OFF" >/dev/null
-echo "assistant tools on: $(as $U "hermes tools list" | sed -n '/Built-in/,/Plugin/p' | grep ' enabled ' | awk '{print $3}' | tr '\n' ' ')"
+/opt/lite/bin/hermes-driver tools disable $OFF >/dev/null
+echo "assistant tools on: $(/opt/lite/bin/hermes-driver tools list | sed -n '/Built-in/,/Plugin/p' | grep ' enabled ' | awk '{print $3}' | tr '\n' ' ')"
 # 5. Hermes's stock skills (coding, GitHub and so on) are not for a private assistant; Hermes's own switch removes
 #    them and stops updates from putting them back. The tour skill lives outside that folder and stays.
-as $U "hermes skills opt-out --remove --yes" >/dev/null 2>&1 || echo "stock skills could not be removed"
-echo "assistant skills left: $(as $U "hermes skills list" | grep -c 'enabled *│' || true)"
+/opt/lite/bin/hermes-driver skills opt-out --remove --yes >/dev/null 2>&1 || echo "stock skills could not be removed"
+echo "assistant skills left: $(/opt/lite/bin/hermes-driver skills list | grep -c 'enabled *│' || true)"
 echo "STEP 60 OK"

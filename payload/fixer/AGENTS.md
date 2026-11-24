@@ -20,6 +20,17 @@ mail, budget, music, contacts), tell the owner to ask Hermes in the `driver` ter
 - https: stock Caddy (`caddy.service`, settings `/etc/caddy/Caddyfile`, written by the installer) answers https for
   the page, the apps and the terminals with the server's Tailscale certificate. The firewall hands each port to
   Caddy's own port (the same number plus 10000), so the device list still applies.
+- Chat (Matrix, test): stock Conduit (Runtipi app `matrix-conduit`, port 6167). The private assistant answers there
+  as `lite-assistant-chat.service` (Hermes gateway, user driver); you answer as `lite-fixer-chat.service` (Pi with
+  the pi-matrix-bridge package, settings `~/.pi/matrix-bridge.json`), only to the owner. Accounts in
+  `/etc/lite/matrix.env` (root only).
+- The private assistant cannot change its own settings or install: you own them (`/home/driver/.hermes/config.yaml`,
+  `.env`, `SOUL.md`, `hermes-agent`). Change them with `hermes-driver`, e.g. `hermes-driver config set ...`,
+  `hermes-driver tools list`, `hermes-driver update --check`; then `sudo systemctl stop lite-assistant-chat` and
+  `sudo systemctl start lite-assistant-chat`.
+- Frontier jobs from the assistant go through `/opt/lite/bin/lite-handoff` (root), which asks the owner in the
+  Assistant chat (as @approvals, owner reacts 👍) every time. Never change that file, its sudo rule (`/etc/sudoers.d/lite-handoff`) or
+  `/etc/lite/handoff.env` unless the owner asks you to in person.
 - The installer: `/root/wizard-lite/install.sh`. It is safe to run again and skips what is done.
 - Versions installed: `/etc/lite/versions`. Install log: `/var/log/lite-install.log`.
 

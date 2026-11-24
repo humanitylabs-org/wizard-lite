@@ -1,0 +1,160 @@
+#!/usr/bin/python3 -I
+"""The one door from the private assistant to Frontier. Custom (see PLAN.md): stock Hermes approvals always offer
+"for this session" and "always", and the assistant cannot be the one that remembers a yes, so the owner's yes is
+asked here instead, outside the assistant's reach. Root-owned; the driver user may run it only through sudo, with
+no arguments:
+
+    sudo -n /opt/lite/bin/lite-handoff  < brief.txt
+
+It posts the brief, exactly as it will be run, into the owner's Assistant chat from its own Matrix account
+(@approvals, token root-only), as a notice, which the assistant ignores. Only the owner's thumbs up or check mark
+reaction on that one message is a yes. Any other reaction, a typed message (even "yes") or no answer within the
+time limit is a no, and nothing runs. Every handoff asks again; nothing is remembered. On yes the brief goes to
+Claude Code (or Codex) as the frontier user, in a new folder under /srv/lite-frontier, and its answer is printed
+for the assistant. Plain Matrix HTTP, no encryption (Miguel's choice: Tailscale plus his own server).
+Setup (root, from the installer): lite-handoff --setup
+"""
+import fcntl, json, os, pwd, secrets, subprocess, sys, time, urllib.parse, urllib.request
+from pathlib import Path
+
+ENV = Path("/etc/lite/handoff.env")      # root only: homeserver, account token, room
+JOBS = Path("/srv/lite-frontier")        # frontier writes, driver reads
+MAX_BRIEF = 20000
+YES = {"👍", "👍️", "✅", "✔️", "✔"}
+RUN_LIMIT = 1800
+
+
+def env():
+    return dict(l.split("=", 1) for l in ENV.read_text().splitlines() if "=" in l) if ENV.exists() else {}
+
+
+def out(msg, code):
+    print(msg); sys.stdout.flush(); os._exit(code)
+
+
+def api(e, method, path, body=None, token=True, timeout=20):
+    req = urllib.request.Request(e["HS"] + "/_matrix/client/v3" + path, method=method,
+                                 data=None if body is None else json.dumps(body).encode(),
+                                 headers={"content-type": "application/json",
+                                          **({"Authorization": "Bearer " + e["GATE_TOKEN"]} if token else {})})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+q = lambda s: urllib.parse.quote(s, safe="")
+
+
+def notice(e, text):
+    return api(e, "PUT", f"/rooms/{q(e['ROOM_ID'])}/send/m.room.message/lite{secrets.token_hex(8)}",
+               {"msgtype": "m.notice", "body": text})["event_id"]
+
+
+def setup():
+    """Log the approvals account in once (one fixed device) and put it in the owner's Assistant chat only."""
+    e = env(); mx = dict(l.split("=", 1) for l in Path("/etc/lite/matrix.env").read_text().splitlines() if "=" in l)
+    for k in ("HS", "GATE_USER", "OWNER_ID", "ROOM_ID"):
+        if not e.get(k): out(f"setup: {k} missing in {ENV}", 1)
+    ok = False
+    if e.get("GATE_TOKEN"):
+        try: api(e, "GET", "/account/whoami"); ok = True
+        except Exception: pass
+    if not ok:
+        r = api(e, "POST", "/login", {"type": "m.login.password", "identifier": {"type": "m.id.user", "user": e["GATE_USER"]},
+                "password": mx["APPROVALS_PASSWORD"], "device_id": "LITEGATE",
+                "initial_device_display_name": "Approvals (installer)"}, token=False)
+        e["GATE_TOKEN"] = r["access_token"]
+        ENV.write_text("".join(f"{k}={v}\n" for k, v in e.items() if k in ("HS", "GATE_USER", "OWNER_ID", "ROOM_ID",
+                       "WAIT_SECONDS", "GATE_TOKEN"))); os.chmod(ENV, 0o600)
+    api(e, "PUT", f"/profile/{q(e['GATE_USER'])}/displayname", {"displayname": "Approvals"})
+    api(e, "POST", f"/rooms/{q(e['ROOM_ID'])}/join", {})
+    for r in api(e, "GET", "/joined_rooms")["joined_rooms"]:   # e.g. the separate Approvals room of older installs
+        if r != e["ROOM_ID"]:
+            api(e, "POST", f"/rooms/{q(r)}/leave", {}); api(e, "POST", f"/rooms/{q(r)}/forget", {})
+    m = api(e, "GET", f"/rooms/{q(e['ROOM_ID'])}/joined_members")["joined"]
+    out(f"approvals: in the Assistant chat ({len(m)} members, owner {'joined' if e['OWNER_ID'] in m else 'not joined yet'})", 0)
+
+
+def frontier_tool():
+    h = Path("/home/frontier")
+    if (h / ".claude/.credentials.json").exists(): return "claude"
+    if (h / ".codex/auth.json").exists(): return "codex"
+    return None
+
+
+def wait_for_owner(e, prompt_id, wait):
+    """The owner's answer to the prompt: 'yes' only for a YES reaction on it; any other reaction or typed message is no."""
+    flt = json.dumps({"presence": {"types": []}, "account_data": {"types": []},
+                      "room": {"rooms": [e["ROOM_ID"]], "state": {"types": []}, "ephemeral": {"types": []},
+                               "account_data": {"types": []}, "timeline": {"types": ["m.reaction", "m.room.message"]}}})
+    since, end = e["SINCE"], time.time() + wait
+    while time.time() < end:
+        t = int(max(1, min(30, end - time.time())) * 1000)
+        try:
+            r = api(e, "GET", f"/sync?timeout={t}&since={q(since)}&filter={q(flt)}", timeout=t / 1000 + 20)
+        except Exception:
+            time.sleep(3); continue
+        since = r["next_batch"]
+        for ev in r.get("rooms", {}).get("join", {}).get(e["ROOM_ID"], {}).get("timeline", {}).get("events", []):
+            if ev.get("sender") != e["OWNER_ID"]: continue   # the assistant, @approvals, anyone else: ignored
+            rel = ev.get("content", {}).get("m.relates_to") or {}
+            if ev["type"] == "m.reaction" and rel.get("event_id") == prompt_id:
+                key = str(rel.get("key", "")).strip()
+                return "yes" if key in YES else "no:reaction " + key
+            if ev["type"] == "m.room.message":
+                return "no:typed"
+    return "no:timeout"
+
+
+def handoff(brief):
+    e = env(); wait = int(e.get("WAIT_SECONDS", "600"))  # root-only file, so the assistant cannot change it
+    if not e.get("GATE_TOKEN"): out("Frontier handoff is not set up yet (the installer sets it up).", 2)
+    tool = frontier_tool()
+    if not tool: out("Frontier is not signed in yet. The owner signs in once in the Frontier terminal tile "
+                     "(type claude, or codex login). Nothing was sent.", 2)
+    if e["OWNER_ID"] not in api(e, "GET", f"/rooms/{q(e['ROOM_ID'])}/joined_members")["joined"]:
+        out("The owner is not in the Assistant chat. Nothing was sent.", 2)
+    e["SINCE"] = api(e, "GET", "/sync?timeout=0&filter=" + q('{"room":{"timeline":{"limit":0}}}'))["next_batch"]
+    name = {"claude": "Claude Code", "codex": "Codex"}[tool]
+    pid = notice(e, f"🔐 Approve this job for Frontier ({name})?\n"
+                    f"The assistant wants to send Frontier the brief below, exactly as written. Frontier is cut off from your apps.\n"
+                    f"React 👍 to this message to run it once. Anything else (another reaction, typing, or no answer in "
+                    f"{wait // 60} minutes) means no.\n"
+                    f"─────── brief ───────\n{brief}\n─────── end ───────")
+    verdict = wait_for_owner(e, pid, wait)
+    if verdict != "yes":
+        why = {"no:timeout": "no answer in time", "no:typed": "a typed reply is not an approval"}.get(verdict, "not approved")
+        notice(e, f"❌ {why.capitalize()}: nothing was sent to Frontier.")
+        out(f"The owner did not approve this handoff ({why}). Nothing ran. Tell the owner; do not retry unless they ask.", 3)
+    job = JOBS / (time.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(3))
+    fr = pwd.getpwnam("frontier"); job.mkdir(mode=0o2750); os.chown(job, fr.pw_uid, pwd.getpwnam("driver").pw_gid)
+    notice(e, f"✅ Approved, once. Frontier is working in {job} …")
+    cmd = {"claude": ["claude", "-p", "--dangerously-skip-permissions"],
+           "codex": ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "-"]}[tool]
+    t0 = time.time()
+    try:
+        p = subprocess.run(["runuser", "-u", "frontier", "--", "env", "-i", "HOME=/home/frontier", "USER=frontier",
+                            "LOGNAME=frontier", "LANG=C.UTF-8", "PATH=/home/frontier/.local/bin:/usr/local/bin:/usr/bin:/bin",
+                            "bash", "-c", 'cd "$0" && umask 027 && exec "$@"', str(job)] + cmd,
+                           input=brief, capture_output=True, text=True, timeout=RUN_LIMIT)
+        rc, res = p.returncode, (p.stdout or "") + (("\n[stderr]\n" + p.stderr[-2000:]) if p.returncode and p.stderr else "")
+    except subprocess.TimeoutExpired:
+        rc, res = 124, f"Frontier did not finish within {RUN_LIMIT // 60} minutes and was stopped."
+    files = sorted(str(f.relative_to(job)) for f in job.rglob("*") if f.is_file())[:50]
+    secs = round(time.time() - t0)
+    notice(e, f"{'✔' if rc == 0 else '⚠'} Frontier finished in {secs}s (exit {rc}). The assistant will report back.")
+    out(f"Approved by the owner (once). Frontier ({name}) ran in {job} for {secs}s, exit {rc}.\n"
+        f"Files in that folder: {', '.join(files) or 'none'}\nFrontier's answer:\n{res[-8000:]}", 0 if rc == 0 else 4)
+
+
+def main():
+    if os.getuid() != 0: out("run through sudo", 1)
+    if sys.argv[1:] == ["--setup"]: setup()
+    if sys.argv[1:]: out("no arguments; the brief comes on standard input", 1)
+    brief = sys.stdin.read(MAX_BRIEF + 1).strip()
+    if not brief: out("empty brief", 1)
+    if len(brief) > MAX_BRIEF: out(f"brief too long (over {MAX_BRIEF} characters)", 1)
+    lock = open("/run/lite-handoff.lock", "w"); fcntl.flock(lock, fcntl.LOCK_EX)  # one approval at a time
+    handoff(brief)
+
+
+main()
